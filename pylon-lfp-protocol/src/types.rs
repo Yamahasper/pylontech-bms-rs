@@ -1,3 +1,5 @@
+use core::fmt::Display;
+
 const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
 
 pub struct Frame<'a> {
@@ -32,6 +34,7 @@ impl<'a> Frame<'a> {
     /// Construct a new frame
     ///
     /// `info` has to be the ASCII encoded payload.
+    /// Returns an error when info is larger than [MAX_ENCODED_PAYLOAD_LEN].
     pub fn new(ver: Version, adr: u8, cid2: Cid2, info: &'a [u8]) -> Result<Frame<'a>, ()> {
         if info.len() > MAX_ENCODED_PAYLOAD_LEN {
             return Err(());
@@ -59,6 +62,7 @@ impl<'a> Frame<'a> {
 }
 
 /// Encoded protocol version
+#[derive(Debug)]
 pub struct Version(pub u8);
 impl Version {
     /// Create a new [Version] from `major` and `minor`
@@ -66,7 +70,7 @@ impl Version {
     /// _Note:_ `major` and `minor` are only stored in 4bit.
     /// Values greater than `15` will be truncated.
     pub fn new(major: u8, minor: u8) -> Self {
-        Self((major << 4) & (minor & 0b1111))
+        Self((major << 4) ^ (minor & 0b1111))
     }
     pub fn major(&self) -> u8 {
         self.0 >> 4
@@ -82,12 +86,18 @@ impl Default for Version {
         Self::new(2, 8)
     }
 }
+impl Display for Version {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "v{}.{}", self.major(), self.minor())
+    }
+}
 
 /// `CID1` control identifier
 ///
 /// RS232 (ver. 2.8) and RS485 (ver. 3.3) protocols
 /// only specify one `CID1` which is `BatteryData`.
 #[non_exhaustive]
+#[derive(Debug)]
 enum Cid1 {
     BatteryData = 0x46,
 }
@@ -95,6 +105,7 @@ enum Cid1 {
 /// `CID2` control identifier
 ///
 /// Eiter a command code or a response code.
+#[derive(Debug)]
 pub enum Cid2 {
     Command(CommandCode),
     Response(ResponseCode),
@@ -113,6 +124,7 @@ impl From<ResponseCode> for Cid2 {
 /// `CID2` command codes (for both RS232 and RS485 protocol)
 ///
 /// Some of the command codes are only available in the RS232 protocol version.
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum CommandCode {
     /// Get analog value, fixed point
@@ -144,6 +156,7 @@ pub enum CommandCode {
 }
 
 /// `CID2` response codes
+#[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ResponseCode {
     /// Success
@@ -166,6 +179,14 @@ pub enum ResponseCode {
     ///
     /// Issued when communication between master and slave pack fails.
     CommunicationErr = 0x91,
+}
+impl ResponseCode {
+    fn is_err(&self) -> bool {
+        !self.is_ok()
+    }
+    fn is_ok(&self) -> bool {
+        *self == ResponseCode::Normal
+    }
 }
 
 /// Encoded length of the `INFO` field
@@ -201,5 +222,14 @@ mod tests {
         const INPUT: u16 = 18;
         let length = InfoLength::new(INPUT);
         assert_eq!(length.0, EXPECTED);
+    }
+    #[test]
+    fn test_version_encoding() {
+        use super::Version;
+
+        let ver = Version::new(2, 8);
+        assert_eq!(ver.major(), 2);
+        assert_eq!(ver.minor(), 8);
+        assert_eq!(format!("{ver}"), "v2.8");
     }
 }
