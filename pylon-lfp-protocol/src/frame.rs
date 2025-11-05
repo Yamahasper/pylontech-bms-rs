@@ -1,16 +1,19 @@
-use embedded_io::Write;
+use embedded_io::{Read, Write};
 
 use crate::{Error, util};
-use core::fmt::Display;
+use core::{char::DecodeUtf16, fmt::Display};
+use log::debug;
 use util::*;
 
-const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
+pub const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
 
+/// A protocol frame
+#[derive(Debug)]
 pub struct Frame<'a> {
     /// Protocol version field
-    ver: Version,
+    pub ver: Version,
     /// Battery address
-    adr: u8,
+    pub adr: u8,
     /// `CID1`
     ///
     /// Control identifier 1
@@ -18,17 +21,17 @@ pub struct Frame<'a> {
     /// `CID2`
     ///
     /// Either a command or a response code.
-    cid2: Cid2,
+    pub cid2: Cid2,
     /// `LENGTH`
     ///
     /// Encodes the length of the `INFO` field.
-    length: InfoLength,
+    pub length: InfoLength,
     /// `INFO` in ASCII encoded form
     ///
     /// The payload of the frame.
     /// Either command data (`COMMAND_INFO`) or
     /// response data (`DATA_INFO`).
-    info: &'a [u8],
+    pub info: &'a [u8],
 }
 impl<'a> Frame<'a> {
     /// The Start of Information flag (`~`)
@@ -53,9 +56,83 @@ impl<'a> Frame<'a> {
             info,
         })
     }
-    /// Decodes a ASCII encoded packet
-    pub fn decode(ascii: &'a [u8]) -> Result<Frame<'a>, ()> {
-        todo!()
+    /// Decode a ASCII encoded packet
+    ///
+    /// Returns [Error::InvalidInput] when the `SOI` wasn't encountered as first byte.
+    /// Returns [Error::Internal] when the `info_buf` isn't large enough.
+    pub fn decode<R: Read>(
+        reader: &mut R,
+        info_buf: &'a mut [u8],
+    ) -> Result<Frame<'a>, Error<R::Error>> {
+        let mut soi = [0; 1];
+        if reader.read(&mut soi)? != 1 {
+            return Err(Error::InvalidInput);
+        };
+        if soi[0] != Self::SOI {
+            return Err(Error::InvalidInput);
+        }
+
+        let mut checksum = Checksum::new();
+
+        let mut u8_buf = [0u8; 2];
+        let mut u16_buf = [0u8; 4];
+
+        // Decode version
+        reader.read_exact(&mut u8_buf)?;
+        checksum.update(&u8_buf);
+        let ver = Version::decode_hex(&u8_buf)?;
+        debug!("Decoded ver {ver}");
+
+        // Decode address
+        reader.read_exact(&mut u8_buf)?;
+        checksum.update(&u8_buf);
+        let adr = u8_from_hex(&u8_buf)?;
+        debug!("Decoded adr {adr:#04X}");
+
+        // Decode CID1
+        reader.read_exact(&mut u8_buf)?;
+        checksum.update(&u8_buf);
+        Cid1::decode_hex(&u8_buf)?;
+        debug!("CID1 ok");
+
+        // Decode CID2
+        reader.read_exact(&mut u8_buf)?;
+        checksum.update(&u8_buf);
+        let cid2 = ResponseCode::decode_hex(&u8_buf)?;
+        debug!("Decoded response code: {cid2:?}");
+
+        // Decode LENGTH
+        reader.read_exact(&mut u16_buf)?;
+        checksum.update(&u16_buf);
+        let length = InfoLength::decode_hex(&u16_buf)?;
+        length.validate().map_err(|_| Error::Cecksum)?;
+        debug!("Decoded valid payload length: {}", length.length());
+
+        // Return if we can't read the full frame
+        if info_buf.len() < length.length() as usize {
+            return Err(Error::Internal);
+        }
+
+        // Read the payload
+        let info_buf_sized = &mut info_buf[..length.length() as usize];
+        reader.read_exact(info_buf_sized)?;
+        checksum.update(info_buf_sized);
+        debug!("Read payload {:02x?}", info_buf_sized);
+
+        // Read CHKSUM
+        reader.read_exact(&mut u16_buf)?;
+        let chksum = u16_from_hex(&u16_buf)?;
+        let calculated_checksum = checksum.finalize();
+        debug!("Decoded checksum {chksum}, calculated checksum {calculated_checksum}");
+        if chksum != calculated_checksum {
+            return Err(Error::Cecksum);
+        }
+
+        if cid2.is_err() {
+            return Err(Error::Response(cid2));
+        }
+        Frame::new(ver, adr, cid2.into(), &info_buf[..length.length() as usize])
+            .map_err(|_| Error::Internal)
     }
     /// Construct a fully assembled ASCII/HEX encoded packet of data
     pub fn encode<W: Write>(&self, out: &mut W) -> Result<(), Error<W::Error>> {
@@ -113,7 +190,7 @@ impl<'a> Frame<'a> {
 
 /// Encoded protocol version
 #[derive(Debug)]
-pub struct Version(pub u8);
+pub struct Version(u8);
 impl Version {
     /// Create a new [Version] from `major` and `minor`
     ///
@@ -131,12 +208,18 @@ impl Version {
     pub fn encode_hex(&self) -> [u8; 2] {
         u8_encode_hex(self.0)
     }
+    pub fn decode_hex(ascii: &[u8; 2]) -> Result<Self, DecodeError> {
+        Ok(Self(u8_from_hex(ascii)?))
+    }
 }
 impl Default for Version {
     fn default() -> Self {
         // TODO: Implement feature flags for different protocol versions.
-        //       For now we simply default to the latest RS232 version (2.8).
-        Self::new(2, 8)
+        //       For now we simply default to the implemented RS232 protocol version.
+        Self::new(
+            crate::RS232_PROTOCOL_VERSION_MAJOR,
+            crate::RS232_PROTOCOL_VERSION_MINOR,
+        )
     }
 }
 impl Display for Version {
@@ -157,6 +240,14 @@ enum Cid1 {
 impl Cid1 {
     fn encode_hex(&self) -> [u8; 2] {
         u8_encode_hex(*self as u8)
+    }
+    pub fn decode_hex(ascii: &[u8; 2]) -> Result<Cid1, DecodeError> {
+        let value = u8_from_hex(ascii)?;
+        if value == Self::BatteryData as u8 {
+            Ok(Self::BatteryData)
+        } else {
+            Err(DecodeError::UnknownVariant)
+        }
     }
 }
 
@@ -216,6 +307,26 @@ impl CommandCode {
     fn encode_hex(&self) -> [u8; 2] {
         u8_encode_hex(*self as u8)
     }
+    pub fn decode_hex(ascii: &[u8; 2]) -> Result<CommandCode, DecodeError> {
+        let value = u8_from_hex(ascii)?;
+        let cmd = match value {
+            0x42 => CommandCode::GetAnalogValue,
+            0x44 => CommandCode::GetAlarmInfo,
+            0x47 => CommandCode::GetSystemParameter,
+            0x4f => CommandCode::GetProtocolVersion,
+            0x51 => CommandCode::GetManufacturerInfo,
+            0x90 => CommandCode::GetQuantityOfPack,
+            0x91 => CommandCode::SetCommunicationRate,
+            0x92 => CommandCode::GetCharge,
+            0x93 => CommandCode::GetSerialNumber,
+            0x94 => CommandCode::SetChargeInfo,
+            0x95 => CommandCode::TurnOff,
+            0x96 => CommandCode::GetFirmwareInfo,
+            0x99 => CommandCode::ControlCommand,
+            _ => return Err(DecodeError::UnknownVariant),
+        };
+        Ok(cmd)
+    }
 }
 
 /// `CID2` response codes
@@ -250,6 +361,22 @@ impl ResponseCode {
     fn is_ok(&self) -> bool {
         *self == ResponseCode::Normal
     }
+    pub fn decode_hex(ascii: &[u8; 2]) -> Result<ResponseCode, DecodeError> {
+        let value = u8_from_hex(ascii)?;
+        let cmd = match value {
+            0x00 => ResponseCode::Normal,
+            0x01 => ResponseCode::VerError,
+            0x02 => ResponseCode::ChksumErr,
+            0x03 => ResponseCode::LChksumErr,
+            0x04 => ResponseCode::Cid2Err,
+            0x05 => ResponseCode::CommandFormatErr,
+            0x06 => ResponseCode::InvalidData,
+            0x90 => ResponseCode::AdrErr,
+            0x91 => ResponseCode::CommunicationErr,
+            _ => return Err(DecodeError::UnknownVariant),
+        };
+        Ok(cmd)
+    }
 }
 
 /// Encoded length of the `INFO` field
@@ -257,6 +384,7 @@ impl ResponseCode {
 /// This datatype encodes the lenght of the frame payload (`INFO` field).
 /// The encoded value holds the lengh (referred to as `LENID` in the spec)
 /// and a checksum (reffered to as `LCHKSUM` in the spec).
+#[derive(PartialEq, Eq, Debug)]
 pub struct InfoLength(u16);
 
 impl InfoLength {
@@ -276,6 +404,16 @@ impl InfoLength {
     }
     fn encode_hex(&self) -> [u8; 4] {
         u16_encode_hex(self.0)
+    }
+    fn decode_hex(ascii: &[u8; 4]) -> Result<Self, DecodeError> {
+        Ok(Self(u16_from_hex(ascii)?))
+    }
+    fn validate(&self) -> Result<(), ()> {
+        let check = Self::new(self.length());
+        if self != &check { Err(()) } else { Ok(()) }
+    }
+    fn length(&self) -> u16 {
+        self.0 & 0b1111_1111_1111
     }
 }
 
@@ -306,6 +444,9 @@ impl Checksum {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+
     #[test]
     fn test_info_length() {
         use super::InfoLength;
@@ -406,5 +547,65 @@ mod tests {
             str::from_utf8(EXPECTED),
             str::from_utf8(&buf)
         );
+    }
+
+    #[test]
+    fn test_decode_frame1() {
+        use super::*;
+        INIT.call_once(|| {
+            simple_logger::init_with_level(log::Level::Debug).unwrap();
+        });
+
+        /// Get Analog Value response from 20 Cell LiFePo
+        const PACKET: [u8; 172] = [
+            0x7E, 0x32, 0x35, 0x30, 0x31, 0x34, 0x36, 0x30, 0x30, 0x44, 0x30, 0x39, 0x41, 0x30,
+            0x30, 0x30, 0x31, 0x31, 0x34, 0x30, 0x44, 0x30, 0x41, 0x30, 0x44, 0x30, 0x41, 0x30,
+            0x44, 0x30, 0x42, 0x30, 0x44, 0x30, 0x42, 0x30, 0x44, 0x30, 0x42, 0x30, 0x44, 0x30,
+            0x42, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x42, 0x30, 0x44, 0x30, 0x42, 0x30,
+            0x44, 0x30, 0x41, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30,
+            0x43, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x43, 0x30,
+            0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30, 0x43, 0x30, 0x44, 0x30,
+            0x43, 0x30, 0x41, 0x30, 0x42, 0x37, 0x37, 0x30, 0x42, 0x37, 0x35, 0x30, 0x42, 0x37,
+            0x36, 0x30, 0x42, 0x37, 0x36, 0x30, 0x42, 0x37, 0x38, 0x30, 0x42, 0x37, 0x41, 0x30,
+            0x42, 0x37, 0x36, 0x30, 0x42, 0x37, 0x36, 0x30, 0x42, 0x33, 0x43, 0x30, 0x42, 0x34,
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x41, 0x31, 0x36, 0x31, 0x45, 0x41, 0x35, 0x30,
+            0x34, 0x32, 0x37, 0x31, 0x30, 0x30, 0x30, 0x30, 0x34, 0x32, 0x37, 0x31, 0x30, 0x44,
+            0x42, 0x45, 0x35, 0x0D,
+        ];
+
+        let mut info_buf = [0u8; MAX_ENCODED_PAYLOAD_LEN];
+
+        let packet =
+            Frame::decode(&mut (PACKET.as_slice()), &mut info_buf).expect("Error decoding packet");
+
+        println!("{packet:#?}");
+    }
+    #[test]
+    fn test_decode_frame2() {
+        use super::*;
+        INIT.call_once(|| {
+            simple_logger::init_with_level(log::Level::Debug).unwrap();
+        });
+
+        /// Example response from specification
+        const PACKET: [u8; 128] = [
+            0x7E, 0x32, 0x30, 0x30, 0x31, 0x34, 0x36, 0x30, 0x30, 0x43, 0x30, 0x36, 0x45, 0x31,
+            0x31, 0x30, 0x31, 0x30, 0x46, 0x30, 0x44, 0x34, 0x35, 0x30, 0x44, 0x34, 0x34, 0x30,
+            0x44, 0x34, 0x35, 0x30, 0x44, 0x34, 0x34, 0x30, 0x44, 0x34, 0x35, 0x30, 0x44, 0x34,
+            0x34, 0x30, 0x44, 0x33, 0x45, 0x30, 0x44, 0x34, 0x35, 0x30, 0x44, 0x34, 0x41, 0x30,
+            0x44, 0x34, 0x41, 0x30, 0x44, 0x34, 0x42, 0x30, 0x44, 0x34, 0x41, 0x30, 0x44, 0x34,
+            0x41, 0x30, 0x44, 0x34, 0x41, 0x30, 0x44, 0x34, 0x41, 0x30, 0x35, 0x30, 0x42, 0x43,
+            0x33, 0x30, 0x42, 0x43, 0x33, 0x30, 0x42, 0x43, 0x33, 0x30, 0x42, 0x43, 0x44, 0x30,
+            0x42, 0x43, 0x44, 0x30, 0x30, 0x30, 0x30, 0x43, 0x37, 0x32, 0x35, 0x42, 0x46, 0x36,
+            0x38, 0x30, 0x32, 0x43, 0x33, 0x35, 0x30, 0x30, 0x30, 0x30, 0x32, 0x45, 0x35, 0x35,
+            0x33, 0x0D,
+        ];
+
+        let mut info_buf = [0u8; MAX_ENCODED_PAYLOAD_LEN];
+
+        let packet =
+            Frame::decode(&mut (PACKET.as_slice()), &mut info_buf).expect("Error decoding packet");
+
+        println!("{packet:#?}");
     }
 }

@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 embedded-io = "0.7.1"
+log = "0.4.28"
 
 [dev-dependencies]
 embedded-io = { version = "0.7.1", features = ["std"] }
+simple_logger = "5.1.0"
