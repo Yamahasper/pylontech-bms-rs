@@ -12,9 +12,22 @@
 ///
 /// _Note:_ The specification erranously calculates the checksum as `0xFC72` for this example.
 pub fn calculate_checksum(data: &[u8]) -> u16 {
-    let sum = data.into_iter().fold(0, |acc, x| acc + *x as u32);
+    let sum = data.iter().fold(0, |acc, x| acc + *x as u32);
     let checksum = !(sum % 65536) + 1;
     checksum as u16
+}
+
+pub fn u8_encode_hex(value: u8) -> [u8; 2] {
+    use embedded_io::Write;
+    let mut buf = [0u8; 2];
+    let _ = buf.as_mut_slice().write_fmt(format_args!("{:02X}", value));
+    buf
+}
+pub fn u16_encode_hex(value: u16) -> [u8; 4] {
+    use embedded_io::Write;
+    let mut buf = [0u8; 4];
+    let _ = buf.as_mut_slice().write_fmt(format_args!("{:04X}", value));
+    buf
 }
 
 #[cfg(test)]
@@ -36,5 +49,13 @@ mod tests {
             0x32, 0x30, 0x30, 0x31, 0x34, 0x36, 0x34, 0x32, 0x45, 0x30, 0x30, 0x32, 0x30, 0x31,
         ];
         assert_eq!(calculate_checksum(INPUT), EXPECTED);
+    }
+    #[test]
+    fn test_u8_encode_hex() {
+        assert_eq!(&super::u8_encode_hex(0x0C), b"0C");
+    }
+    #[test]
+    fn test_u16_encode_hex() {
+        assert_eq!(&super::u16_encode_hex(0x0A02), b"0A02");
     }
 }

@@ -4,11 +4,12 @@ use core::fmt::Display;
 use embedded_io::Read;
 use embedded_io::Write;
 
-mod types;
+mod frame;
 mod util;
 
-pub use types::ResponseCode;
-use types::*;
+pub use frame::ResponseCode;
+use frame::*;
+pub use util::calculate_checksum;
 
 /// Pylontech RS232 protocol BMS
 pub struct PylontechBms<U: Read + Write> {
@@ -22,13 +23,14 @@ impl<U: Read + Write> PylontechBms<U> {
 
     /// Get the protocol version from the BMS
     pub fn get_protocol_version(&mut self) -> Result<Version, Error<U::Error>> {
-        let _packet = Frame::new(
+        let packet = Frame::new(
             Version::default(),
             1,
             CommandCode::GetProtocolVersion.into(),
             &[],
         )
         .map_err(|_| Error::Internal)?;
+        packet.encode(&mut self.uart)?;
         todo!()
     }
 }
@@ -55,6 +57,19 @@ impl<T: embedded_io::Error + 'static> core::error::Error for Error<T> {
         match self {
             Error::Transport(e) => Some(e),
             _ => None,
+        }
+    }
+}
+impl<T: embedded_io::Error> From<T> for Error<T> {
+    fn from(value: T) -> Self {
+        Self::Transport(value)
+    }
+}
+impl<T: embedded_io::Error> From<embedded_io::WriteFmtError<T>> for Error<T> {
+    fn from(value: embedded_io::WriteFmtError<T>) -> Self {
+        match value {
+            embedded_io::WriteFmtError::FmtError => Error::Internal,
+            embedded_io::WriteFmtError::Other(e) => Error::Transport(e),
         }
     }
 }
