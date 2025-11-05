@@ -1,7 +1,7 @@
 use embedded_io::{Read, Write};
 
 use crate::{Error, util};
-use core::{char::DecodeUtf16, fmt::Display};
+use core::fmt::Display;
 use log::debug;
 use util::*;
 
@@ -42,19 +42,16 @@ impl<'a> Frame<'a> {
     ///
     /// `info` has to be the ASCII encoded payload.
     /// Returns an error when info is larger than [MAX_ENCODED_PAYLOAD_LEN].
-    pub fn new(ver: Version, adr: u8, cid2: Cid2, info: &'a [u8]) -> Result<Frame<'a>, ()> {
-        if info.len() > MAX_ENCODED_PAYLOAD_LEN {
-            return Err(());
-        }
+    pub fn new(ver: Version, adr: u8, cid2: Cid2, info: &'a [u8]) -> Frame<'a> {
         let length = InfoLength::new(info.len() as u16);
-        Ok(Self {
+        Self {
             ver,
             adr,
             cid1: Cid1::BatteryData,
             cid2,
             length,
             info,
-        })
+        }
     }
     /// Decode a ASCII encoded packet
     ///
@@ -131,11 +128,20 @@ impl<'a> Frame<'a> {
         if cid2.is_err() {
             return Err(Error::Response(cid2));
         }
-        Frame::new(ver, adr, cid2.into(), &info_buf[..length.length() as usize])
-            .map_err(|_| Error::Internal)
+        Ok(Frame::new(
+            ver,
+            adr,
+            cid2.into(),
+            &info_buf[..length.length() as usize],
+        ))
     }
     /// Construct a fully assembled ASCII/HEX encoded packet of data
+    ///
+    /// Returns [Error::InvalidInput] when the payload is larger than [MAX_ENCODED_PAYLOAD_LEN].
     pub fn encode<W: Write>(&self, out: &mut W) -> Result<(), Error<W::Error>> {
+        if self.info.len() > MAX_ENCODED_PAYLOAD_LEN {
+            return Err(Error::InvalidInput);
+        }
         let Cid2::Command(cmd) = self.cid2 else {
             return Err(Error::Internal);
         };
@@ -497,8 +503,7 @@ mod tests {
             1,
             CommandCode::GetProtocolVersion.into(),
             &[],
-        )
-        .expect("Error setting up frame");
+        );
 
         let mut buf: Vec<u8> = Vec::new();
 
@@ -532,8 +537,7 @@ mod tests {
             1,
             CommandCode::GetAnalogValue.into(),
             &[0x30, 0x31],
-        )
-        .expect("Error setting up frame");
+        );
 
         let mut buf: Vec<u8> = Vec::new();
 

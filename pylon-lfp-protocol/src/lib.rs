@@ -34,8 +34,7 @@ impl<U: Read + Write> PylontechBms<U> {
             1,
             CommandCode::GetProtocolVersion.into(),
             &[],
-        )
-        .map_err(|_| Error::Internal)?;
+        );
         packet.encode(&mut self.uart)?;
         let mut buf = [0u8; MAX_ENCODED_PAYLOAD_LEN]; // TODO payload might be always 0 length for get version
         let response = Frame::decode(&mut self.uart, &mut buf)?;
