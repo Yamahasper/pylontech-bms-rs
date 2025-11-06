@@ -2,10 +2,12 @@ use embedded_io::{Read, Write};
 
 use crate::{Error, util};
 use core::fmt::Display;
-use log::debug;
+use log::{debug, warn};
 use util::*;
 
+/// The maximum size of the ASCII encoded payload in bytes
 pub const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
+pub const MAX_UNENCODED_PAYLOAD_LEN: usize = MAX_ENCODED_PAYLOAD_LEN / 2;
 
 /// A protocol frame
 #[derive(Debug)]
@@ -26,7 +28,7 @@ pub struct Frame<'a> {
     ///
     /// Encodes the length of the `INFO` field.
     pub length: InfoLength,
-    /// `INFO` in ASCII encoded form
+    /// `INFO` in binay form
     ///
     /// The payload of the frame.
     /// Either command data (`COMMAND_INFO`) or
@@ -40,10 +42,9 @@ impl<'a> Frame<'a> {
     const EOI: u8 = 0x0D;
     /// Construct a new frame
     ///
-    /// `info` has to be the ASCII encoded payload.
-    /// Returns an error when info is larger than [MAX_ENCODED_PAYLOAD_LEN].
+    /// `info` has to be the unencoded payload.
     pub fn new(ver: Version, adr: u8, cid2: Cid2, info: &'a [u8]) -> Frame<'a> {
-        let length = InfoLength::new(info.len() as u16);
+        let length = InfoLength::new(info.len() as u16 * 2);
         Self {
             ver,
             adr,
@@ -55,6 +56,7 @@ impl<'a> Frame<'a> {
     }
     /// Decode a ASCII encoded packet
     ///
+    /// Fills the `info_buf` with the decoded (binary) payload.
     /// Returns [Error::InvalidInput] when the `SOI` wasn't encountered as first byte.
     /// Returns [Error::Internal] when the `info_buf` isn't large enough.
     pub fn decode<R: Read>(
@@ -106,15 +108,21 @@ impl<'a> Frame<'a> {
         debug!("Decoded valid payload length: {}", length.length());
 
         // Return if we can't read the full frame
-        if info_buf.len() < length.length() as usize {
+        if info_buf.len() < length.length() as usize / 2 {
+            warn!(
+                "Buffer for payload to small ({} < {} ({} hex values))",
+                info_buf.len(),
+                length.length() / 2,
+                length.length()
+            );
             return Err(Error::Internal);
         }
 
-        // Read the payload
-        let info_buf_sized = &mut info_buf[..length.length() as usize];
-        reader.read_exact(info_buf_sized)?;
-        checksum.update(info_buf_sized);
-        debug!("Read payload {:02x?}", info_buf_sized);
+        for byte in &mut info_buf[..length.length() as usize / 2] {
+            reader.read_exact(&mut u8_buf)?;
+            checksum.update(&u8_buf);
+            *byte = u8_from_hex(&u8_buf)?;
+        }
 
         // Read CHKSUM
         reader.read_exact(&mut u16_buf)?;
@@ -137,9 +145,10 @@ impl<'a> Frame<'a> {
     }
     /// Construct a fully assembled ASCII/HEX encoded packet of data
     ///
-    /// Returns [Error::InvalidInput] when the payload is larger than [MAX_ENCODED_PAYLOAD_LEN].
+    /// Returns [Error::InvalidInput] when the payload is to large,
+    /// (larger than [MAX_UNENCODED_PAYLOAD_LEN]).
     pub fn encode<W: Write>(&self, out: &mut W) -> Result<(), Error<W::Error>> {
-        if self.info.len() > MAX_ENCODED_PAYLOAD_LEN {
+        if self.info.len() > MAX_UNENCODED_PAYLOAD_LEN {
             return Err(Error::InvalidInput);
         }
         let Cid2::Command(cmd) = self.cid2 else {
@@ -176,8 +185,11 @@ impl<'a> Frame<'a> {
         out.write(&len)?;
 
         // write data
-        chksum.update(self.info);
-        out.write_all(self.info)?;
+        for byte in self.info {
+            let encoded = u8_encode_hex(*byte);
+            chksum.update(&encoded);
+            out.write_all(&encoded)?;
+        }
 
         // write checksum
         let chksum = chksum.finalize();
@@ -536,7 +548,7 @@ mod tests {
             Version::new(2, 0),
             1,
             CommandCode::GetAnalogValue.into(),
-            &[0x30, 0x31],
+            &[0x01],
         );
 
         let mut buf: Vec<u8> = Vec::new();
@@ -577,7 +589,7 @@ mod tests {
             0x42, 0x45, 0x35, 0x0D,
         ];
 
-        let mut info_buf = [0u8; MAX_ENCODED_PAYLOAD_LEN];
+        let mut info_buf = [0u8; MAX_UNENCODED_PAYLOAD_LEN];
 
         let packet =
             Frame::decode(&mut (PACKET.as_slice()), &mut info_buf).expect("Error decoding packet");
@@ -605,7 +617,7 @@ mod tests {
             0x33, 0x0D,
         ];
 
-        let mut info_buf = [0u8; MAX_ENCODED_PAYLOAD_LEN];
+        let mut info_buf = [0u8; MAX_UNENCODED_PAYLOAD_LEN];
 
         let packet =
             Frame::decode(&mut (PACKET.as_slice()), &mut info_buf).expect("Error decoding packet");

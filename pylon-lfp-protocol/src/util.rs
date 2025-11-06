@@ -14,11 +14,15 @@ pub fn u16_encode_hex(value: u16) -> [u8; 4] {
 }
 
 pub fn u8_from_hex(ascii: &[u8; 2]) -> Result<u8, DecodeError> {
-    let string = str::from_utf8(ascii).map_err(|_| DecodeError::Hex)?;
+    let string = str::from_utf8(ascii)
+        .map_err(|_| DecodeError::Hex)
+        .inspect_err(|_| log::debug!("Non ascii value encountered"))?;
     u8::from_str_radix(string, 16).map_err(|_| DecodeError::Hex)
 }
 pub fn u16_from_hex(ascii: &[u8; 4]) -> Result<u16, DecodeError> {
-    let string = str::from_utf8(ascii).map_err(|_| DecodeError::Hex)?;
+    let string = str::from_utf8(ascii)
+        .map_err(|_| DecodeError::Hex)
+        .inspect_err(|_| log::debug!("Non ascii value encountered"))?;
     u16::from_str_radix(string, 16).map_err(|_| DecodeError::Hex)
 }
 
