@@ -1,0 +1,3 @@
+[workspace]
+members = ["pylon-lfp-protocol", "pyloncli"]
+resolver = "3"

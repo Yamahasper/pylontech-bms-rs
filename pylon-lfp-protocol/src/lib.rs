@@ -4,6 +4,7 @@ use core::fmt::Display;
 use embedded_io::Read;
 use embedded_io::Write;
 
+pub mod commands;
 mod frame;
 pub mod types;
 mod util;
@@ -11,6 +12,10 @@ mod util;
 pub use frame::{
     Cid2, CommandCode, Frame, InfoLength, MAX_ENCODED_PAYLOAD_LEN, ResponseCode, Version,
 };
+use zerocopy::FromZeros;
+use zerocopy::IntoBytes;
+
+use crate::commands::SystemParameter;
 
 /// Major version this library intends to implement
 const RS232_PROTOCOL_VERSION_MAJOR: u8 = 2;
@@ -36,9 +41,27 @@ impl<U: Read + Write> PylontechBms<U> {
             &[],
         );
         packet.encode(&mut self.uart)?;
+        self.uart.flush()?;
         let mut buf = [0u8; MAX_ENCODED_PAYLOAD_LEN]; // TODO payload might be always 0 length for get version
         let response = Frame::decode(&mut self.uart, &mut buf)?;
         Ok(response.ver)
+    }
+
+    /// Get the system parameters
+    pub fn get_system_parameter(&mut self) -> Result<SystemParameter, Error<U::Error>> {
+        let packet = Frame::new(
+            Version::default(),
+            1,
+            CommandCode::GetSystemParameter.into(),
+            &[],
+        );
+        packet.encode(&mut self.uart)?;
+        self.uart.flush()?;
+        let mut system_parameter = SystemParameter::new_zeroed();
+
+        let buf = system_parameter.as_mut_bytes();
+        Frame::decode(&mut self.uart, buf)?;
+        Ok(system_parameter)
     }
 }
 

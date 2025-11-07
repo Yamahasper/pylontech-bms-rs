@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 embedded-io = "0.7.1"
 log = "0.4.28"
+zerocopy = { version = "0.8.27", features = ["derive"] }
 
 [dev-dependencies]
 embedded-io = { version = "0.7.1", features = ["std"] }
