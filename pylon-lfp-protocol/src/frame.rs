@@ -7,6 +7,7 @@ use util::*;
 
 /// The maximum size of the ASCII encoded payload in bytes
 pub const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
+/// The maximum size of unencoded payload data in bytes that a message can contain
 pub const MAX_UNENCODED_PAYLOAD_LEN: usize = MAX_ENCODED_PAYLOAD_LEN / 2;
 
 /// A protocol frame

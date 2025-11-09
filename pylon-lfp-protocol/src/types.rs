@@ -7,14 +7,14 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 /// Millivolt
 #[derive(Debug, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 #[repr(transparent)]
-pub struct MilliVolt(big_endian::I16);
+pub struct MilliVolt(big_endian::U16);
 impl Display for MilliVolt {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}mV", self.0)
     }
 }
 impl MilliVolt {
-    pub fn get(&self) -> i16 {
+    pub fn get(&self) -> u16 {
         self.0.get()
     }
 }
