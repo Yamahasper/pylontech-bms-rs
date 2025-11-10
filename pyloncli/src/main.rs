@@ -53,9 +53,31 @@ fn main() {
 fn get_and_print_analog_values(bms: &mut PylontechBms<FromStd<File>>) {
     let mut buf = [0; pylon_lfp_protocol::MAX_UNENCODED_PAYLOAD_LEN];
     let measurements = bms.get_analog_value(0xFF, &mut buf).unwrap();
-    println!("{:?}", measurements.flags);
+    if measurements.flags.switch_change() {
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!");
+        println!("!! Unread switch change !!");
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    }
+    if measurements.flags.alarm_change() {
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!");
+        println!("!! Unread alarm change !!");
+        println!("!!!!!!!!!!!!!!!!!!!!!!!!!");
+    }
     for i in 0..measurements.get_pack_count() {
+        println!("=========");
         println!("Pack {i}:");
-        println!("{:#?}", measurements.get_pack(i));
+        println!("=========");
+        let pack = measurements.get_pack(i).unwrap();
+        for (n, v) in pack.cell_voltages.iter().enumerate() {
+            println!("Voltage {n}: {v}");
+        }
+        for (n, t) in pack.temperatures.iter().enumerate() {
+            println!("Temp {n}: {:.2}°C", t.celsius());
+        }
+        println!("Current: {}", pack.pack_current);
+        println!("Total Voltage: {}", pack.pack_voltage);
+        println!("Remaining capacity: {}", pack.pack_remaining);
+        println!("Total capacity: {}", pack.total_capacity);
+        println!("Cell cycles: {}", pack.cell_cycles);
     }
 }

@@ -63,7 +63,7 @@ impl Temperature {
     }
     /// The temperature in Celsius
     pub fn celsius(&self) -> f32 {
-        self.kelvin() + 273.15
+        self.kelvin() - 273.15
     }
     /// Fixed-point 0.1K resolution temperature
     pub fn get(&self) -> u16 {
