@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.5.51", features = ["derive"] }
 embedded-io-adapters = { version = "0.7.0", features = ["std"] }
+embedded-io.workspace = true
 pylon-lfp-protocol = { path = "../pylon-lfp-protocol" }
+serialport = "4.8.1"
