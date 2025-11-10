@@ -134,6 +134,15 @@ impl<'a> Frame<'a> {
             return Err(Error::Cecksum);
         }
 
+        // Read EOI
+        let mut eoi = [0; 1];
+        if reader.read(&mut eoi)? != 1 {
+            return Err(Error::InvalidInput);
+        };
+        if eoi[0] != Self::EOI {
+            return Err(Error::InvalidInput);
+        }
+
         if cid2.is_err() {
             return Err(Error::Response(cid2));
         }
