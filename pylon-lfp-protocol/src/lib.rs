@@ -10,11 +10,12 @@ pub mod types;
 mod util;
 
 pub use frame::{
-    Cid2, CommandCode, Frame, InfoLength, MAX_ENCODED_PAYLOAD_LEN, ResponseCode, Version,
+    Cid2, CommandCode, Frame, InfoLength, MAX_UNENCODED_PAYLOAD_LEN, ResponseCode, Version,
 };
 use zerocopy::FromZeros;
 use zerocopy::IntoBytes;
 
+use crate::commands::AnalogValueResponse;
 use crate::commands::SystemParameter;
 
 /// Major version this library intends to implement
@@ -42,7 +43,7 @@ impl<U: Read + Write> PylontechBms<U> {
         );
         packet.encode(&mut self.uart)?;
         self.uart.flush()?;
-        let mut buf = [0u8; MAX_ENCODED_PAYLOAD_LEN]; // TODO payload might be always 0 length for get version
+        let mut buf = [0u8; MAX_UNENCODED_PAYLOAD_LEN]; // TODO payload might be always 0 length for get version
         let response = Frame::decode(&mut self.uart, &mut buf)?;
         Ok(response.ver)
     }
@@ -62,6 +63,32 @@ impl<U: Read + Write> PylontechBms<U> {
         let buf = system_parameter.as_mut_bytes();
         Frame::decode(&mut self.uart, buf)?;
         Ok(system_parameter)
+    }
+    /// Get analog values
+    ///
+    /// Command "_get analog value_" to get measurements of one or multiple battery packs.
+    ///
+    /// Takes a pack address, set to `0xFF` to get measurements for all packs.
+    ///
+    /// Takes a buffer where the dynamically sized response is stored.
+    pub fn get_analog_value<'a>(
+        &mut self,
+        address: u8,
+        paylaod_buf: &'a mut [u8],
+    ) -> Result<AnalogValueResponse<'a>, Error<U::Error>> {
+        let adr = [address];
+        let packet = Frame::new(
+            Version::default(),
+            1,
+            CommandCode::GetAnalogValue.into(),
+            &adr,
+        );
+        packet.encode(&mut self.uart)?;
+        self.uart.flush()?;
+
+        Frame::decode(&mut self.uart, paylaod_buf)?;
+        let measurements = AnalogValueResponse::from_bytes(paylaod_buf)?;
+        Ok(measurements)
     }
 }
 

@@ -7,6 +7,7 @@ use util::*;
 
 /// The maximum size of the ASCII encoded payload in bytes
 pub const MAX_ENCODED_PAYLOAD_LEN: usize = 4095;
+/// The maximum size of unencoded payload data in bytes that a message can contain
 pub const MAX_UNENCODED_PAYLOAD_LEN: usize = MAX_ENCODED_PAYLOAD_LEN / 2;
 
 /// A protocol frame
@@ -131,6 +132,15 @@ impl<'a> Frame<'a> {
         debug!("Decoded checksum {chksum}, calculated checksum {calculated_checksum}");
         if chksum != calculated_checksum {
             return Err(Error::Cecksum);
+        }
+
+        // Read EOI
+        let mut eoi = [0; 1];
+        if reader.read(&mut eoi)? != 1 {
+            return Err(Error::InvalidInput);
+        };
+        if eoi[0] != Self::EOI {
+            return Err(Error::InvalidInput);
         }
 
         if cid2.is_err() {
