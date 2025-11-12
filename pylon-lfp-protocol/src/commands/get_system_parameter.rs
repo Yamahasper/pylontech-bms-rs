@@ -1,21 +1,24 @@
 use core::fmt::Display;
 
-use crate::types::{MilliAmpere, MilliVolt, Temperature};
+use crate::types::{MilliAmpere, Temperature, Volt};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 #[derive(Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(C)]
-pub struct SystemParameter {
-    pub unit_cell_voltage: MilliVolt,
-    pub unit_cell_low_voltage_threshold: MilliVolt,
+pub struct SystemParameter<
+    const CELL_VOLTAGE_FACTOR: u32 = 1000,
+    const TOTAL_VOLTAGE_FACTOR: u32 = 1000,
+> {
+    pub unit_cell_voltage: Volt<CELL_VOLTAGE_FACTOR>,
+    pub unit_cell_low_voltage_threshold: Volt<CELL_VOLTAGE_FACTOR>,
     /// Under voltage protection threshold
-    pub unit_cell_under_voltage_threshold: MilliVolt,
+    pub unit_cell_under_voltage_threshold: Volt<CELL_VOLTAGE_FACTOR>,
     pub charge_upper_limit_temp: Temperature,
     pub charge_lower_limit_temp: Temperature,
     pub charge_lower_limit_current: MilliAmpere,
-    pub upper_limit_total_voltage: MilliVolt,
-    pub lower_limit_total_voltage: MilliVolt,
-    pub under_voltage_of_total_voltage: MilliVolt,
+    pub upper_limit_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
+    pub lower_limit_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
+    pub under_voltage_of_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
     pub discharge_upper_limit_temp: Temperature,
     pub discharge_lower_limit_temp: Temperature,
     pub discharge_lower_limit_current: MilliAmpere,
