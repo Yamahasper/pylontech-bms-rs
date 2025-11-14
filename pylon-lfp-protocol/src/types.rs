@@ -4,22 +4,33 @@ use core::fmt::Display;
 use zerocopy::byteorder::big_endian;
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
-/// Millivolt
+pub type MilliVolt = Volt<1000>;
+
+/// Voltage
+///
+/// Holds a voltage in Volt with a factor.
 #[derive(Debug, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 #[repr(transparent)]
-pub struct MilliVolt(big_endian::U16);
-impl Display for MilliVolt {
+pub struct Volt<const FACTOR: u32>(big_endian::U16);
+impl<const FACTOR: u32> Display for Volt<FACTOR> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}mV", self.0)
+        if FACTOR == 1000 {
+            write!(f, "{}mV", self.0)
+        } else {
+            write!(f, "{}V", self.get_volt())
+        }
     }
 }
-impl MilliVolt {
-    pub fn get(&self) -> u16 {
+impl<const FACTOR: u32> Volt<FACTOR> {
+    pub fn get_raw(&self) -> u16 {
         self.0.get()
+    }
+    pub fn get_volt(&self) -> f32 {
+        self.get_raw() as f32 / FACTOR as f32
     }
 }
 
-/// Milliampere
+/// Current
 #[derive(Debug, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 #[repr(transparent)]
 pub struct MilliAmpere(big_endian::I16);
@@ -34,7 +45,7 @@ impl MilliAmpere {
     }
 }
 
-/// Milliampere-hours
+/// Electric charge
 #[derive(Debug, FromBytes, IntoBytes, Immutable, KnownLayout, Unaligned)]
 #[repr(transparent)]
 pub struct MilliAmpereHours(big_endian::U16);
@@ -115,8 +126,8 @@ mod tests {
     fn test_from_bytes() {
         // Millivolt
         const MILLI_VOLT: [u8; 2] = [0x0d, 0x45]; // 3397mV
-        let milli_volt = MilliVolt::ref_from_bytes(&MILLI_VOLT).unwrap();
-        assert_eq!(milli_volt.get(), 3397);
+        let milli_volt: &Volt<1000> = Volt::ref_from_bytes(&MILLI_VOLT).unwrap();
+        assert_eq!(milli_volt.get_raw(), 3397);
 
         // Milliampere
         const MILLI_AMP: [u8; 2] = [0x0d, 0x45]; // 3397mA

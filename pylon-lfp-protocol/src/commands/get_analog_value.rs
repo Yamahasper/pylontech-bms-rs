@@ -1,7 +1,7 @@
 use log::{error, trace};
 use zerocopy::FromBytes;
 
-use crate::types::{ChangeFlags, MilliAmpere, MilliAmpereHours, MilliVolt, Temperature};
+use crate::types::{ChangeFlags, MilliAmpere, MilliAmpereHours, Temperature, Volt};
 
 /// Errors encountered while parsing a [AnalogValueResponse]
 #[derive(Debug)]
@@ -31,15 +31,19 @@ pub struct AnalogValueResponse<'a> {
 ///
 /// This can be obtained from a [AnalogValueResponse::get_pack].
 #[derive(Debug)]
-pub struct PackData<'a> {
+pub struct PackData<
+    'a,
+    const CELL_VOLTAGE_FACTOR: u32 = 1000,
+    const TOTAL_VOLTAGE_FACTOR: u32 = 1000,
+> {
     /// Cell voltages
-    pub cell_voltages: &'a [MilliVolt],
+    pub cell_voltages: &'a [Volt<CELL_VOLTAGE_FACTOR>],
     /// Temperatures reported for this pack
     pub temperatures: &'a [Temperature],
     /// Current total pack current
     pub pack_current: MilliAmpere,
     /// Current total pack voltage
-    pub pack_voltage: MilliVolt,
+    pub pack_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
     /// Remaining pack capacity
     ///
     /// _Note_: It is unclear if this is the currently stored capacity,
@@ -67,7 +71,7 @@ impl PackData<'_> {
         // Voltages
         let (volt_count, rest) = buf.split_at(1);
         let volt_count = volt_count[0] as usize;
-        let (volts, rest) = <[MilliVolt]>::ref_from_prefix_with_elems(rest, volt_count)
+        let (volts, rest) = <[Volt<_>]>::ref_from_prefix_with_elems(rest, volt_count)
             .map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Temperatures
@@ -82,7 +86,7 @@ impl PackData<'_> {
 
         // Pack voltage
         let (pack_voltage, rest) =
-            MilliVolt::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
+            Volt::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Pack remaining
         let (pack_remaining, rest) = MilliAmpereHours::read_from_prefix(rest)
@@ -221,12 +225,12 @@ mod tests {
             .expect("Failed to parse PackData");
         assert_eq!(pack.cell_voltages.len(), 15);
         assert_eq!(pack.temperatures.len(), 5);
-        assert_eq!(pack.cell_voltages[0].get(), 3397);
-        assert_eq!(pack.cell_voltages[14].get(), 3402);
+        assert_eq!(pack.cell_voltages[0].get_raw(), 3397);
+        assert_eq!(pack.cell_voltages[14].get_raw(), 3402);
         assert_eq!(pack.temperatures[0].kelvin(), 301.1);
         assert_eq!(pack.temperatures[4].kelvin(), 302.1);
         assert_eq!(pack.pack_current.get(), 0);
-        assert_eq!(pack.pack_voltage.get(), 50981);
+        assert_eq!(pack.pack_voltage.get_raw(), 50981);
         assert_eq!(pack.pack_remaining.get(), 49000);
         assert_eq!(pack.total_capacity.get(), 50000);
         assert_eq!(pack.cell_cycles, 2);
