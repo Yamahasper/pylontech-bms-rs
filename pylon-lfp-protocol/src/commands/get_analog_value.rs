@@ -1,7 +1,10 @@
 use log::{error, trace};
 use zerocopy::FromBytes;
 
-use crate::types::{ChangeFlags, MilliAmpere, MilliAmpereHours, Temperature, Volt};
+use crate::types::{
+    Ampere, AmpereHours, ChangeFlags, Temperature, Volt,
+    exponents::{DECI, MILLI},
+};
 
 /// Errors encountered while parsing a [AnalogValueResponse]
 #[derive(Debug)]
@@ -33,37 +36,44 @@ pub struct AnalogValueResponse<'a> {
 #[derive(Debug)]
 pub struct PackData<
     'a,
-    const CELL_VOLTAGE_FACTOR: u32 = 1000,
-    const TOTAL_VOLTAGE_FACTOR: u32 = 1000,
+    const CELL_VOLTAGE_EXP: i8 = MILLI,
+    const TOTAL_VOLTAGE_EXP: i8 = MILLI,
+    const CURRENT_EXP: i8 = MILLI,
+    const AMP_HOUR_EXP: i8 = MILLI,
+    const TEMP_EXP: i8 = DECI,
 > {
     /// Cell voltages
-    pub cell_voltages: &'a [Volt<CELL_VOLTAGE_FACTOR>],
+    pub cell_voltages: &'a [Volt<CELL_VOLTAGE_EXP>],
     /// Temperatures reported for this pack
-    pub temperatures: &'a [Temperature],
+    pub temperatures: &'a [Temperature<TEMP_EXP>],
     /// Current total pack current
-    pub pack_current: MilliAmpere,
+    pub pack_current: Ampere<CURRENT_EXP>,
     /// Current total pack voltage
-    pub pack_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
-    /// Remaining pack capacity
-    ///
-    /// _Note_: It is unclear if this is the currently stored capacity,
-    /// or if its the current remaining capacity when fully charged.
-    // TODO Clarify the above by experimental validation.
-    pub pack_remaining: MilliAmpereHours,
+    pub pack_voltage: Volt<TOTAL_VOLTAGE_EXP>,
+    /// Current remaining charge
+    pub pack_remaining: AmpereHours<AMP_HOUR_EXP>,
     /// `User-Defined` field
     ///
     /// This is specified to be always `2`. _(?!)_
     pub user_defined: u8,
     /// Total capacity of the pack
-    pub total_capacity: MilliAmpereHours,
+    pub total_capacity: AmpereHours<AMP_HOUR_EXP>,
     /// Cycles of the pack
     pub cell_cycles: u16,
     /// The length in bytes of this PackData
     len_bytes: usize,
 }
 
-impl PackData<'_> {
-    fn from_bytes(buf: &'_ [u8]) -> Result<PackData<'_>, AnalogValueParseError> {
+impl<
+    'a,
+    const CELL_VOLTAGE_EXP: i8,
+    const TOTAL_VOLTAGE_EXP: i8,
+    const CURRENT_EXP: i8,
+    const AMP_HOUR_EXP: i8,
+    const TEMP_EXP: i8,
+> PackData<'a, CELL_VOLTAGE_EXP, TOTAL_VOLTAGE_EXP, CURRENT_EXP, AMP_HOUR_EXP, TEMP_EXP>
+{
+    fn from_bytes(buf: &'a [u8]) -> Result<Self, AnalogValueParseError> {
         if buf.is_empty() {
             return Err(AnalogValueParseError::InvalidInput);
         }
@@ -77,28 +87,28 @@ impl PackData<'_> {
         // Temperatures
         let (temp_count, rest) = rest.split_at(1);
         let temp_count = temp_count[0] as usize;
-        let (temps, rest) = <[Temperature]>::ref_from_prefix_with_elems(rest, temp_count)
+        let (temps, rest) = <[Temperature<TEMP_EXP>]>::ref_from_prefix_with_elems(rest, temp_count)
             .map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Pack current
         let (pack_current, rest) =
-            MilliAmpere::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
+            Ampere::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Pack voltage
         let (pack_voltage, rest) =
             Volt::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Pack remaining
-        let (pack_remaining, rest) = MilliAmpereHours::read_from_prefix(rest)
-            .map_err(|_| AnalogValueParseError::InvalidInput)?;
+        let (pack_remaining, rest) =
+            AmpereHours::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // User-defined field
         let user_defined = *rest.first().ok_or(AnalogValueParseError::InvalidInput)?;
         let rest = rest.get(1..).ok_or(AnalogValueParseError::InvalidInput)?;
 
         // Total capacity
-        let (total_capacity, rest) = MilliAmpereHours::read_from_prefix(rest)
-            .map_err(|_| AnalogValueParseError::InvalidInput)?;
+        let (total_capacity, rest) =
+            AmpereHours::read_from_prefix(rest).map_err(|_| AnalogValueParseError::InvalidInput)?;
 
         // Cell cycles
         let cell_cycles_be = [rest[0], rest[1]];
@@ -140,13 +150,42 @@ impl<'a> AnalogValueResponse<'a> {
             pack_count,
         })
     }
+    /// Get the number of packs reported by this response
     pub fn get_pack_count(&self) -> u8 {
         self.pack_count
     }
     /// Get [PackData] by number
     ///
     /// Indexed starting at `0`.
-    pub fn get_pack(&self, pack_number: u8) -> Result<PackData<'_>, AnalogValueParseError> {
+    ///
+    /// # Example
+    /// ```rust, no_run
+    /// # use pylon_lfp_protocol::commands::{AnalogValueResponse, PackData};
+    /// # fn get_pack_example(payload: &[u8]) {
+    /// let response = AnalogValueResponse::from_bytes(payload)
+    ///     .expect("Failed to parse analog value response from payload");
+    ///
+    /// for i in 0..response.get_pack_count() {
+    ///    // Using the default exponents here by specifying the type as `PackData<'_>`.
+    ///    let pack: PackData<'_> = response
+    ///        .get_pack(i)
+    ///        .expect("Failed to parse PackData");
+    ///    println!("Pack {i}: {:?}", pack);
+    /// }
+    /// # }
+    /// ```
+    pub fn get_pack<
+        const CELL_VOLTAGE_EXP: i8,
+        const TOTAL_VOLTAGE_EXP: i8,
+        const CURRENT_EXP: i8,
+        const AMP_HOUR_EXP: i8,
+    >(
+        &self,
+        pack_number: u8,
+    ) -> Result<
+        PackData<'_, CELL_VOLTAGE_EXP, TOTAL_VOLTAGE_EXP, CURRENT_EXP, AMP_HOUR_EXP>,
+        AnalogValueParseError,
+    > {
         if pack_number >= self.get_pack_count() {
             error!(
                 "Analog value response has only {} packs, tried to get {}",
@@ -158,7 +197,7 @@ impl<'a> AnalogValueResponse<'a> {
 
         let mut rest = self.buf;
         for i in 0..pack_number {
-            let pack = PackData::from_bytes(rest).inspect_err(|_| {
+            let pack: PackData<'_> = PackData::from_bytes(rest).inspect_err(|_| {
                 error!("Failed to traverse pack data while parsing pack {i} in get analog value response");
             })?;
             trace!(
@@ -175,7 +214,9 @@ impl<'a> AnalogValueResponse<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Frame, commands::get_analog_value::AnalogValueResponse, frame::MAX_UNENCODED_PAYLOAD_LEN,
+        Frame,
+        commands::{PackData, get_analog_value::AnalogValueResponse},
+        frame::MAX_UNENCODED_PAYLOAD_LEN,
     };
     /// Get the payload from the response in the specification example
     fn payload_from_spec(info_buf: &mut [u8]) -> &[u8] {
@@ -220,7 +261,7 @@ mod tests {
 
         assert_eq!(analog_value_response.get_pack_count(), 1);
 
-        let pack = analog_value_response
+        let pack: PackData<'_> = analog_value_response
             .get_pack(0)
             .expect("Failed to parse PackData");
         assert_eq!(pack.cell_voltages.len(), 15);
@@ -229,10 +270,10 @@ mod tests {
         assert_eq!(pack.cell_voltages[14].get_raw(), 3402);
         assert_eq!(pack.temperatures[0].kelvin(), 301.1);
         assert_eq!(pack.temperatures[4].kelvin(), 302.1);
-        assert_eq!(pack.pack_current.get(), 0);
+        assert_eq!(pack.pack_current.get_raw(), 0);
         assert_eq!(pack.pack_voltage.get_raw(), 50981);
-        assert_eq!(pack.pack_remaining.get(), 49000);
-        assert_eq!(pack.total_capacity.get(), 50000);
+        assert_eq!(pack.pack_remaining.get_raw(), 49000);
+        assert_eq!(pack.total_capacity.get_raw(), 50000);
         assert_eq!(pack.cell_cycles, 2);
     }
 }
