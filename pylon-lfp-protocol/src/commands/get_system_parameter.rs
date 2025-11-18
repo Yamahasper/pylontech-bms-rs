@@ -1,27 +1,29 @@
 use core::fmt::Display;
 
-use crate::types::{MilliAmpere, Temperature, Volt};
+use crate::types::{Ampere, Temperature, Volt, exponents::MILLI};
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout, Unaligned};
 
 #[derive(Debug, FromBytes, IntoBytes, KnownLayout, Immutable, Unaligned)]
 #[repr(C)]
 pub struct SystemParameter<
-    const CELL_VOLTAGE_FACTOR: u32 = 1000,
-    const TOTAL_VOLTAGE_FACTOR: u32 = 1000,
+    const CELL_VOLTAGE_EXP: i8 = MILLI,
+    const TOTAL_VOLTAGE_EXP: i8 = MILLI,
+    const CURRENT_EXP: i8 = MILLI,
+    const TEMP_EXP: i8 = MILLI,
 > {
-    pub unit_cell_voltage: Volt<CELL_VOLTAGE_FACTOR>,
-    pub unit_cell_low_voltage_threshold: Volt<CELL_VOLTAGE_FACTOR>,
+    pub unit_cell_voltage: Volt<CELL_VOLTAGE_EXP>,
+    pub unit_cell_low_voltage_threshold: Volt<CELL_VOLTAGE_EXP>,
     /// Under voltage protection threshold
-    pub unit_cell_under_voltage_threshold: Volt<CELL_VOLTAGE_FACTOR>,
-    pub charge_upper_limit_temp: Temperature,
-    pub charge_lower_limit_temp: Temperature,
-    pub charge_lower_limit_current: MilliAmpere,
-    pub upper_limit_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
-    pub lower_limit_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
-    pub under_voltage_of_total_voltage: Volt<TOTAL_VOLTAGE_FACTOR>,
-    pub discharge_upper_limit_temp: Temperature,
-    pub discharge_lower_limit_temp: Temperature,
-    pub discharge_lower_limit_current: MilliAmpere,
+    pub unit_cell_under_voltage_threshold: Volt<CELL_VOLTAGE_EXP>,
+    pub charge_upper_limit_temp: Temperature<TEMP_EXP>,
+    pub charge_lower_limit_temp: Temperature<TEMP_EXP>,
+    pub charge_lower_limit_current: Ampere<CURRENT_EXP>,
+    pub upper_limit_total_voltage: Volt<TOTAL_VOLTAGE_EXP>,
+    pub lower_limit_total_voltage: Volt<TOTAL_VOLTAGE_EXP>,
+    pub under_voltage_of_total_voltage: Volt<TOTAL_VOLTAGE_EXP>,
+    pub discharge_upper_limit_temp: Temperature<TEMP_EXP>,
+    pub discharge_lower_limit_temp: Temperature<TEMP_EXP>,
+    pub discharge_lower_limit_current: Ampere<CURRENT_EXP>,
 }
 
 impl Display for SystemParameter {
